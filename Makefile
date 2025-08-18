@@ -23,6 +23,9 @@ CONTAINER_TOOL ?= docker
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+RELEASE_DIR := out
+
+
 .PHONY: all
 all: build
 
@@ -125,9 +128,8 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	@mkdir -p dist
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/default > dist/install.yaml
+	$(KUSTOMIZE) build config/default > $(RELEASE_DIR)/infrastructure-components.yaml
 
 ##@ Deployment
 
@@ -151,6 +153,36 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+
+##@ Release:
+
+$(RELEASE_DIR):
+	mkdir -p $@
+
+.PHONY: release
+release: clean-release  ## Builds and push container images using the latest git tag for the commit.
+	$(MAKE) set-manifest-image
+	$(MAKE) release-manifests
+	$(MAKE) release-templates
+	$(MAKE) release-metadata
+
+.PHONY: set-manifest-image
+set-manifest-image: ## Update kustomize image patch file for default resource.
+	$(info Updating kustomize image patch file for default resource)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+
+.PHONY: release-manifests
+release-manifests: $(KUSTOMIZE) $(RELEASE_DIR) ## Builds the manifests to publish with a release.
+	$(KUSTOMIZE) build config/default > $(RELEASE_DIR)/infrastructure-components.yaml
+
+.PHONY: release-metadata
+release-metadata: $(RELEASE_DIR)
+	cp metadata.yaml $(RELEASE_DIR)/metadata.yaml
+
+.PHONY: clean-release
+clean-release: clean-release-git ## Remove the release folder.
+	rm -rf $(RELEASE_DIR)
 
 ##@ Dependencies
 
